@@ -1,0 +1,39 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "place_id": "sample_1",
+        "name": "McDonald's",
+        "lat": 1.28692,
+        "lon": 103.85457,
+        "categories": ["catering.restaurant"]
+      },
+      "geometry": { "type": "Point", "coordinates": [103.85457, 1.28692] }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "place_id": "sample_2",
+        "name": "Guardian Pharmacy",
+        "lat": 1.30037,
+        "lon": 103.83856,
+        "categories": ["healthcare.pharmacy"]
+      },
+      "geometry": { "type": "Point", "coordinates": [103.83856, 1.30037] }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "place_id": "sample_3",
+        "name": "FairPrice Finest",
+        "lat": 1.30416,
+        "lon": 103.83177,
+        "categories": ["commercial.supermarket"]
+      },
+      "geometry": { "type": "Point", "coordinates": [103.83177, 1.30416] }
+    }
+  ]
+}
+
