@@ -1,3 +1,7 @@
+"""
+Pydantic domain models for Geo Sentinel.
+"""
+
 from __future__ import annotations
 
 from enum import Enum
@@ -13,6 +17,12 @@ class POIStatus(str, Enum):
     UNCHANGED = "UNCHANGED"
 
 
+class ValidationBadge(str, Enum):
+    VALIDATED = "VALIDATED"
+    CONFLICT = "CONFLICT"
+    NOT_VERIFIED = "NOT_VERIFIED"
+
+
 class POI(BaseModel):
     id: str
     name: str
@@ -21,6 +31,16 @@ class POI(BaseModel):
     category: str
     source: str = Field(default="osm")
     raw: Optional[Dict[str, Any]] = None
+
+
+class Review(BaseModel):
+    """Review signals for a POI, loaded from reviews_data.csv."""
+    place_id: str
+    name: str
+    rating: float = Field(ge=0.0, le=5.0)
+    review_count: int = Field(ge=0)
+    last_review_date: str          # ISO date YYYY-MM-DD
+    sentiment: str = "neutral"     # positive | neutral | negative
 
 
 class MatchCandidate(BaseModel):
@@ -41,4 +61,8 @@ class ChangeResult(BaseModel):
     external_id: Optional[str] = None
     distance_m: Optional[float] = None
     name_similarity: Optional[float] = None
-
+    # Review-enriched fields
+    review_rating: Optional[float] = None
+    review_count: Optional[int] = None
+    last_review_date: Optional[str] = None
+    review_sentiment: Optional[str] = None

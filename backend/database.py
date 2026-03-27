@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from difflib import SequenceMatcher
+from typing import Any, Dict, Generator, List, Optional, Tuple
 
 from sqlalchemy import (
     Column,
@@ -29,10 +31,12 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
+from backend.utils import logger
 
 # ---------------------------------------------------------------------------
 # ORM Base & Models
 # ---------------------------------------------------------------------------
+
 
 class Base(DeclarativeBase):
     pass
@@ -41,12 +45,12 @@ class Base(DeclarativeBase):
 class POIRow(Base):
     __tablename__ = "pois"
 
-    id = Column(String, primary_key=True)          # e.g. "osm:node:12345"
+    id = Column(String, primary_key=True)           # e.g. "osm:node:12345"
     name = Column(String, nullable=False)
     lat = Column(Float, nullable=False)
     lon = Column(Float, nullable=False)
     category = Column(String, default="other")
-    source = Column(String, default="osm")          # "osm" | "geoapify"
+    source = Column(String, default="osm")           # "osm" | "geoapify"
     raw_json = Column(Text, default="{}")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -61,7 +65,7 @@ class PipelineRunRow(Base):
     total_external = Column(Integer, default=0)
     matched_pairs = Column(Integer, default=0)
     total_results = Column(Integer, default=0)
-    status = Column(String, default="running")       # running | done | failed
+    status = Column(String, default="running")        # running | done | failed
 
 
 class ResultRow(Base):
@@ -70,7 +74,7 @@ class ResultRow(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     run_id = Column(Integer, ForeignKey("pipeline_runs.id"), nullable=False)
     name = Column(String, nullable=False)
-    status = Column(String, nullable=False)           # NEW | CLOSED | MODIFIED | UNCHANGED
+    status = Column(String, nullable=False)            # NEW | CLOSED | MODIFIED | UNCHANGED
     confidence = Column(Float, default=0.0)
     category = Column(String, nullable=True)
     lat = Column(Float, nullable=True)
@@ -87,23 +91,46 @@ class ResultRow(Base):
 
 _DB_URL_DEFAULT = "sqlite:///./geo_sentinel.db"
 
+_engine: Optional[Engine] = None
+
 
 def _get_url() -> str:
     return os.environ.get("DATABASE_URL") or _DB_URL_DEFAULT
 
 
 def get_engine() -> Engine:
-    return create_engine(_get_url(), echo=False, future=True)
+    """Return a cached engine singleton. Creates tables on first call."""
+    global _engine
+    if _engine is None:
+        _engine = create_engine(_get_url(), echo=False, future=True)
+        # Ensure tables exist immediately — needed for CLI scripts
+        # that don't go through FastAPI lifespan.
+        Base.metadata.create_all(_engine)
+    return _engine
 
 
 _SessionFactory: Optional[sessionmaker] = None
 
 
-def get_session() -> Session:
+def _get_session_factory() -> sessionmaker:
     global _SessionFactory
     if _SessionFactory is None:
         _SessionFactory = sessionmaker(bind=get_engine())
-    return _SessionFactory()
+    return _SessionFactory
+
+
+@contextmanager
+def get_session() -> Generator[Session, None, None]:
+    """Yield a session with automatic commit / rollback / close."""
+    session = _get_session_factory()()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -112,20 +139,18 @@ def get_session() -> Session:
 
 def create_tables() -> None:
     """Create all tables if they don't exist."""
-    engine = get_engine()
-    Base.metadata.create_all(engine)
+    Base.metadata.create_all(get_engine())
 
 
 def test_database_connection(allow_fallback: bool = True) -> Tuple[bool, Optional[str]]:
-    """Returns (ok, error_message)."""
+    """Returns ``(ok, error_message)``."""
     try:
-        engine = get_engine()
-        with engine.connect() as conn:
+        with get_engine().connect() as conn:
             conn.execute(text("SELECT 1"))
         return True, None
-    except Exception as e:
+    except Exception as exc:
         if allow_fallback:
-            return False, str(e)
+            return False, str(exc)
         raise
 
 
@@ -135,13 +160,13 @@ def test_database_connection(allow_fallback: bool = True) -> Tuple[bool, Optiona
 
 def save_pois(pois: list) -> int:
     """
-    Upsert a list of backend.models.POI objects into the pois table.
+    Upsert a list of ``backend.models.POI`` objects into the pois table.
     Returns the number of rows written.
     """
     if not pois:
         return 0
-    session = get_session()
-    try:
+
+    with get_session() as session:
         count = 0
         for p in pois:
             raw = json.dumps(p.raw) if p.raw else "{}"
@@ -159,19 +184,12 @@ def save_pois(pois: list) -> int:
                     category=p.category, source=p.source, raw_json=raw,
                 ))
             count += 1
-        session.commit()
         return count
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 def load_pois_by_source(source: str) -> List[Dict[str, Any]]:
     """Return all POIs for a given source as dicts."""
-    session = get_session()
-    try:
+    with get_session() as session:
         rows = session.query(POIRow).filter(POIRow.source == source).all()
         return [
             {
@@ -181,17 +199,17 @@ def load_pois_by_source(source: str) -> List[Dict[str, Any]]:
             }
             for r in rows
         ]
-    finally:
-        session.close()
 
 
 def save_pipeline_run(
-    total_osm: int, total_external: int, matched_pairs: int, total_results: int,
+    total_osm: int,
+    total_external: int,
+    matched_pairs: int,
+    total_results: int,
     status: str = "done",
 ) -> int:
     """Insert a pipeline run row. Returns the new run id."""
-    session = get_session()
-    try:
+    with get_session() as session:
         now = datetime.now(timezone.utc)
         row = PipelineRunRow(
             started_at=now, finished_at=now,
@@ -200,22 +218,15 @@ def save_pipeline_run(
             status=status,
         )
         session.add(row)
-        session.commit()
-        run_id = row.id
-        return run_id
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
+        session.flush()  # populate row.id before commit
+        return row.id
 
 
 def save_results(run_id: int, results: list) -> int:
     """Persist ChangeResult dicts (or model_dump() output) to the results table."""
     if not results:
         return 0
-    session = get_session()
-    try:
+    with get_session() as session:
         for r in results:
             d = r if isinstance(r, dict) else r.model_dump()
             session.add(ResultRow(
@@ -231,19 +242,12 @@ def save_results(run_id: int, results: list) -> int:
                 distance_m=d.get("distance_m"),
                 name_similarity=d.get("name_similarity"),
             ))
-        session.commit()
         return len(results)
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 def get_latest_run() -> Optional[Dict[str, Any]]:
     """Return the most recent pipeline run + its results, or None."""
-    session = get_session()
-    try:
+    with get_session() as session:
         run = (
             session.query(PipelineRunRow)
             .order_by(PipelineRunRow.id.desc())
@@ -253,27 +257,21 @@ def get_latest_run() -> Optional[Dict[str, Any]]:
             return None
         rows = session.query(ResultRow).filter(ResultRow.run_id == run.id).all()
         return _run_to_dict(run, rows)
-    finally:
-        session.close()
 
 
 def get_run_by_id(run_id: int) -> Optional[Dict[str, Any]]:
     """Return a specific pipeline run + its results, or None."""
-    session = get_session()
-    try:
+    with get_session() as session:
         run = session.get(PipelineRunRow, run_id)
         if not run:
             return None
         rows = session.query(ResultRow).filter(ResultRow.run_id == run.id).all()
         return _run_to_dict(run, rows)
-    finally:
-        session.close()
 
 
 def get_all_runs() -> List[Dict[str, Any]]:
     """Return metadata for all pipeline runs (no results attached)."""
-    session = get_session()
-    try:
+    with get_session() as session:
         runs = session.query(PipelineRunRow).order_by(PipelineRunRow.id.desc()).all()
         return [
             {
@@ -288,39 +286,37 @@ def get_all_runs() -> List[Dict[str, Any]]:
             }
             for r in runs
         ]
-    finally:
-        session.close()
 
 
 # ---------------------------------------------------------------------------
 # Search / Query
 # ---------------------------------------------------------------------------
 
+_STATUS_KEYWORDS = {"NEW", "CLOSED", "MODIFIED", "UNCHANGED"}
+
+
 def search_pois(query: str, limit: int = 50) -> Dict[str, Any]:
     """
-    Interpret user query and return best matching POIs + results from DB.
-    Uses fuzzy matching on name, category, and status.  Never hallucinated —
-    only returns data that exists in the ingested pipeline.
-    """
-    from difflib import SequenceMatcher
+    Search POIs and pipeline results by name, category and status.
 
+    Uses fuzzy matching on name and category.  Only returns data that exists
+    in the ingested pipeline — never hallucinated.
+    """
     q = query.strip().lower()
     if not q:
         return {"query": query, "matches": []}
 
     tokens = q.split()
 
-    # ── Detect if the query mentions a status keyword ──
-    STATUS_KEYWORDS = {"new", "closed", "modified", "unchanged"}
-    status_filter = None
+    # Detect status filter keyword
+    status_filter: Optional[str] = None
     for t in tokens:
-        if t.upper() in STATUS_KEYWORDS:
+        if t.upper() in _STATUS_KEYWORDS:
             status_filter = t.upper()
             break
 
-    session = get_session()
-    try:
-        # ── Search POIs table ──
+    with get_session() as session:
+        # ── Search POIs ──
         poi_query = session.query(POIRow)
         for token in tokens:
             like = f"%{token}%"
@@ -329,8 +325,8 @@ def search_pois(query: str, limit: int = 50) -> Dict[str, Any]:
             )
         candidate_pois = poi_query.limit(limit * 3).all()
 
-        # ── Search Results table (from latest run) ──
-        result_matches = []
+        # ── Search Results (latest run) ──
+        result_matches: list = []
         latest_run = (
             session.query(PipelineRunRow)
             .order_by(PipelineRunRow.id.desc())
@@ -341,16 +337,17 @@ def search_pois(query: str, limit: int = 50) -> Dict[str, Any]:
             if status_filter:
                 res_query = res_query.filter(ResultRow.status == status_filter)
             for token in tokens:
-                if token.upper() in STATUS_KEYWORDS:
-                    continue  # already filtered
+                if token.upper() in _STATUS_KEYWORDS:
+                    continue
                 like = f"%{token}%"
                 res_query = res_query.filter(
                     ResultRow.name.ilike(like) | ResultRow.category.ilike(like)
                 )
             result_matches = res_query.limit(limit * 3).all()
 
-        # ── Score & rank POIs ──
-        scored = []
+        # ── Score & rank ──
+        scored: List[Dict[str, Any]] = []
+
         for p in candidate_pois:
             name_lower = (p.name or "").lower()
             cat_lower = (p.category or "").lower()
@@ -359,7 +356,6 @@ def search_pois(query: str, limit: int = 50) -> Dict[str, Any]:
                 (SequenceMatcher(None, t, cat_lower).ratio() for t in tokens),
                 default=0.0,
             )
-            # Exact substring bonus
             exact_bonus = 0.25 if q in name_lower else 0.0
             score = round(0.60 * name_score + 0.25 * cat_score + exact_bonus, 4)
             scored.append({
@@ -373,7 +369,6 @@ def search_pois(query: str, limit: int = 50) -> Dict[str, Any]:
                 "match_type": "poi",
             })
 
-        # ── Score & rank Results ──
         for r in result_matches:
             name_lower = (r.name or "").lower()
             cat_lower = (r.category or "").lower()
@@ -401,7 +396,7 @@ def search_pois(query: str, limit: int = 50) -> Dict[str, Any]:
 
         # De-duplicate by name (keep highest score)
         seen_names: Dict[str, int] = {}
-        deduped = []
+        deduped: List[Dict[str, Any]] = []
         for item in scored:
             key = (item["name"] or "").lower()
             if key in seen_names:
@@ -414,8 +409,6 @@ def search_pois(query: str, limit: int = 50) -> Dict[str, Any]:
 
         deduped.sort(key=lambda x: -x["match_score"])
         return {"query": query, "matches": deduped[:limit]}
-    finally:
-        session.close()
 
 
 # ---------------------------------------------------------------------------

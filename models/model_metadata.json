@@ -1,0 +1,22 @@
+{
+  "accuracy": 0.9575930626057529,
+  "n_samples": 9456,
+  "n_features": 9,
+  "classes": [
+    "CLOSED",
+    "MODIFIED",
+    "NEW",
+    "UNCHANGED"
+  ],
+  "feature_importances": {
+    "has_match": 0.13278895456131215,
+    "name_similarity": 0.19035733000102367,
+    "distance_m": 0.0036676664875951166,
+    "category_match": 0.05930061167777052,
+    "review_rating": 0.05948640016541447,
+    "review_count": 0.08429790116107398,
+    "review_recency_days": 0.08363077323046983,
+    "review_sentiment_score": 0.010183326855823141,
+    "is_external_only": 0.37628703585951706
+  }
+}
