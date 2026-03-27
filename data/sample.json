@@ -1,0 +1,39 @@
+{
+  "elements": [
+    {
+      "type": "node",
+      "id": 1000001,
+      "lat": 1.28692,
+      "lon": 103.85457,
+      "tags": { "name": "McDonald's", "amenity": "fast_food" }
+    },
+    {
+      "type": "node",
+      "id": 1000002,
+      "lat": 1.30037,
+      "lon": 103.83856,
+      "tags": { "name": "Guardian Pharmacy", "amenity": "pharmacy" }
+    },
+    {
+      "type": "node",
+      "id": 1000003,
+      "lat": 1.30416,
+      "lon": 103.83177,
+      "tags": { "name": "FairPrice Finest", "shop": "supermarket" }
+    },
+    {
+      "type": "node",
+      "id": 1000004,
+      "lat": 1.2905,
+      "lon": 103.8520,
+      "tags": { "name": "Starbucks", "amenity": "cafe" }
+    },
+    {
+      "type": "node",
+      "id": 1000005,
+      "lat": 1.2835,
+      "lon": 103.8607,
+      "tags": { "name": "Marina Bay Sands", "tourism": "hotel" }
+    }
+  ]
+}

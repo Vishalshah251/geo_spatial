@@ -1,0 +1,104 @@
+Problem Analysis
+
+  Challenge: Detect POI (Point-of-Interest) changes — new openings, closures, modifications — for map maintenance by comparing OSM
+  data against alternative real-world signals. No Google APIs allowed.
+
+  Target categories: restaurants, cafes, hotels, tourist attractions, amusement parks, shopping malls, department stores, grocery
+  stores, pharmacies, fuel stations.
+
+  Deliverables: Working prototype, architecture diagram, model evaluation results.
+
+  Key scoring: Innovation & Creativity (10pts) + Technical Realization (10pts) are the big ones.
+
+  ---
+  Unique Approach: "GeoSentinel" — Multi-Signal Fusion Change Detector
+
+  Most teams will do basic web scraping + fuzzy matching. Here's what'll stand out:
+
+  Core Idea: Temporal Signal Triangulation
+
+  Instead of just checking "does this place exist?", treat change detection as a time-series anomaly problem — triangulate multiple
+  weak signals into a strong confidence score.
+
+  Data Sources (No Google)
+
+  ┌──────────────────────────────────────┬────────────────────────────────────┬─────────────────────────────┐
+  │                Source                │               Signal               │           Detects           │
+  ├──────────────────────────────────────┼────────────────────────────────────┼─────────────────────────────┤
+  │ Overpass API (OSM)                   │ Baseline POI data + edit history   │ Base truth                  │
+  ├──────────────────────────────────────┼────────────────────────────────────┼─────────────────────────────┤
+  │ Foursquare Places API (free tier)    │ Venue data, check-ins, tips        │ New places, popularity      │
+  ├──────────────────────────────────────┼────────────────────────────────────┼─────────────────────────────┤
+  │ Yelp Fusion API (free tier)          │ Business listings, reviews, status │ Closures, new openings      │
+  ├──────────────────────────────────────┼────────────────────────────────────┼─────────────────────────────┤
+  │ HERE API (sponsor — use it!)         │ Places, geocoding                  │ Cross-validation            │
+  ├──────────────────────────────────────┼────────────────────────────────────┼─────────────────────────────┤
+  │ OpenStreetMap Changeset API          │ Edit timestamps, frequency         │ Stale vs. active entries    │
+  ├──────────────────────────────────────┼────────────────────────────────────┼─────────────────────────────┤
+  │ Wikidata/Wikipedia API               │ Structured facts on landmarks      │ Tourist attractions, hotels │
+  ├──────────────────────────────────────┼────────────────────────────────────┼─────────────────────────────┤
+  │ Web scraping: TripAdvisor, Zomato    │ Reviews with timestamps            │ Recent activity signals     │
+  ├──────────────────────────────────────┼────────────────────────────────────┼─────────────────────────────┤
+  │ Mapillary API (street-level imagery) │ Storefront photos with timestamps  │ Visual closure detection    │
+  └──────────────────────────────────────┴────────────────────────────────────┴─────────────────────────────┘
+
+  The "Killer Feature" — Street Imagery + Vision AI
+
+  Use Mapillary's open street-level images near a POI's coordinates + a vision model (Claude/open-source BLIP-2) to detect:
+  - Closed shutters / "For Rent" signs
+  - Changed signage (name change)
+  - Construction / renovation
+  This is highly innovative and few teams will attempt it.
+
+  ---
+  Tech Stack
+
+  Frontend:    Next.js + Mapbox GL JS (interactive map dashboard)
+  Backend:     FastAPI (Python) — geospatial processing, ML pipeline
+  Database:    PostgreSQL + PostGIS (spatial queries, POI storage)
+  ML/AI:       scikit-learn (confidence scoring) + Claude API (vision for Mapillary images)
+  Pipeline:    Celery + Redis (async data ingestion from multiple sources)
+  Deploy:      Docker Compose (single command demo)
+
+  Architecture
+
+  ┌─────────────────────────────────────────────────────┐
+  │                   FRONTEND (Next.js)                │
+  │  Mapbox GL map + POI cards + status filters          │
+  └──────────────────────┬──────────────────────────────┘
+                         │ REST API
+  ┌──────────────────────▼──────────────────────────────┐
+  │                 BACKEND (FastAPI)                    │
+  │  /ingest  /detect-changes  /poi/{id}  /dashboard    │
+  └──────┬───────┬────────┬────────┬────────────────────┘
+         │       │        │        │
+  ┌──────▼──┐┌───▼───┐┌───▼───┐┌──▼──────────┐
+  │ Ingestion││ Match ││ Score ││ Vision      │
+  │ Workers  ││Engine ││Engine ││ Analyzer    │
+  │(Celery)  ││       ││       ││(Mapillary+AI)│
+  └──────┬───┘└───┬───┘└───┬───┘└──┬──────────┘
+         │        │        │       │
+  ┌──────▼────────▼────────▼───────▼────────────┐
+  │         PostgreSQL + PostGIS                 │
+  │  OSM POIs | External signals | Change log   │
+  └─────────────────────────────────────────────┘
+
+  Data Sources (async ingestion):
+    OSM Overpass → Foursquare → Yelp → HERE → Mapillary → Wikidata
+
+  Pipeline Flow
+
+  1. Ingest — Pull OSM POIs for target area + categories via Overpass API
+  2. Cross-reference — For each POI, query external sources within a radius using spatial matching (PostGIS ST_DWithin)
+  3. Entity Resolution — Fuzzy name matching (Levenshtein + phonetic) + spatial proximity to link records across sources
+  4. Signal Scoring — Each source votes: exists/missing/changed. Weighted ensemble produces confidence score
+  5. Vision Verification — For high-uncertainty cases, fetch nearest Mapillary image → run vision AI to detect closure/signage
+  6. Output — Status prediction (New / Closed / Modified / Unchanged) + confidence + evidence sources + recommendation
+
+  What Makes This Win
+
+  - Mapillary + Vision AI for visual verification = huge innovation points
+  - HERE API usage (sponsor's product) = smart move
+  - Ensemble confidence scoring instead of binary yes/no = technically sophisticated
+  - PostGIS spatial queries = proper geospatial engineering
+  - Interactive map dashboard = strong demo/presentation

@@ -2,12 +2,8 @@ fastapi
 uvicorn
 requests
 pandas
-psycopg2-binary
 sqlalchemy
-geoalchemy2
 h3
 python-dotenv
 scikit-learn
-xgboost
-redis
-celery
+pydantic
