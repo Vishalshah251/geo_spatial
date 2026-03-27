@@ -117,6 +117,48 @@ def get_model_info() -> Dict[str, Any]:
         }
 
 
+# ── Confidence calibration ──
+
+_MAX_CONFIDENCE = 0.95          # hard cap — nothing is 100% certain
+_SIGMOID_TEMPERATURE = 3.0      # controls steepness of sigmoid squashing
+_ENTROPY_WEIGHT = 0.35          # how much entropy penalises confidence
+
+
+def _calibrate_confidence(proba: np.ndarray) -> float:
+    """
+    Convert a raw probability vector into a calibrated confidence score.
+
+    Steps:
+      1. Take max class probability as the raw signal.
+      2. Compute normalised entropy (0 = certain, 1 = uniform) and subtract
+         a weighted penalty so that ambiguous predictions score lower.
+      3. Apply a temperature-scaled sigmoid to compress extreme values
+         away from 0 and 1, producing a smoother distribution.
+      4. Cap at _MAX_CONFIDENCE.
+
+    Returns a float in [0.0, _MAX_CONFIDENCE].
+    """
+    raw_max = float(np.max(proba))
+    n_classes = len(proba)
+
+    # --- Entropy penalty ---
+    # Normalised entropy: 0 when one class has all probability, 1 when uniform.
+    eps = 1e-12
+    entropy = -np.sum(proba * np.log(proba + eps))
+    max_entropy = np.log(n_classes)
+    norm_entropy = entropy / max_entropy if max_entropy > 0 else 0.0
+
+    penalised = raw_max - _ENTROPY_WEIGHT * norm_entropy
+
+    # --- Sigmoid tempering ---
+    # Centre the squash at 0.5 so values near 0.5 stay near 0.5
+    # and extreme values are pulled back.
+    z = _SIGMOID_TEMPERATURE * (penalised - 0.5)
+    tempered = 1.0 / (1.0 + np.exp(-z))
+
+    return min(float(tempered), _MAX_CONFIDENCE)
+
+
 def predict_status(features: np.ndarray) -> Tuple[str, float]:
     """
     Predict POI status from a feature vector.
@@ -127,7 +169,7 @@ def predict_status(features: np.ndarray) -> Tuple[str, float]:
     Returns:
         (status_label, confidence) tuple.
         status_label is one of: NEW, CLOSED, MODIFIED, UNCHANGED
-        confidence is the max class probability (0.0–1.0).
+        confidence is a *calibrated* score (0.0–0.95).
 
     Raises:
         RuntimeError if model is not available.
@@ -139,9 +181,8 @@ def predict_status(features: np.ndarray) -> Tuple[str, float]:
         x = features.reshape(1, -1) if features.ndim == 1 else features[:1]
         proba = _holder.model.predict_proba(x)[0]
         predicted_idx = int(np.argmax(proba))
-        confidence = float(proba[predicted_idx])
+        confidence = _calibrate_confidence(proba)
 
-        # Map index to label
         classes = list(_holder.model.classes_)
         status = classes[predicted_idx]
 
@@ -156,7 +197,7 @@ def predict_batch(feature_matrix: np.ndarray) -> List[Tuple[str, float]]:
         feature_matrix: numpy array of shape (n, 9).
 
     Returns:
-        List of (status_label, confidence) tuples.
+        List of (status_label, confidence) tuples with calibrated scores.
     """
     with _lock:
         if not _holder.loaded:
@@ -171,6 +212,7 @@ def predict_batch(feature_matrix: np.ndarray) -> List[Tuple[str, float]]:
         results = []
         for proba in probas:
             idx = int(np.argmax(proba))
-            results.append((classes[idx], round(float(proba[idx]), 3)))
+            conf = _calibrate_confidence(proba)
+            results.append((classes[idx], round(conf, 3)))
 
         return results

@@ -8,7 +8,6 @@ import ValidationPanel from "../components/ValidationPanel";
 import {
   detectChanges,
   fetchDashboard,
-  fetchDetectionResults,
   getMLStatus,
   searchPOIs,
 } from "../services/api";
@@ -49,7 +48,7 @@ export default function Dashboard() {
   }, [baseRows, statusFilter]);
   const counts = useMemo(() => summarize(baseRows), [baseRows]);
 
-  // ── Load dashboard stats + detection results on mount ──
+  // ── Load lightweight dashboard stats on mount (NO bulk data) ──
   useEffect(() => {
     fetchDashboard()
       .then((data) => setDashStats(data))
@@ -57,21 +56,6 @@ export default function Dashboard() {
 
     getMLStatus()
       .then((data) => setMlStatus(data))
-      .catch(() => {});
-
-    // Load cached detection results (auto-computed on backend startup)
-    fetchDetectionResults()
-      .then((data) => {
-        if (data && Array.isArray(data.results) && data.results.length > 0) {
-          setMeta({
-            total_osm_pois: data.total_osm_pois ?? 0,
-            total_external_pois: data.total_external_pois ?? 0,
-            matched_pairs: data.matched_pairs ?? 0,
-          });
-          setRows(data.results);
-          setLastRun(new Date().toISOString());
-        }
-      })
       .catch(() => {});
   }, []);
 
@@ -126,7 +110,8 @@ export default function Dashboard() {
         total_external_pois: data?.total_external_pois ?? 0,
         matched_pairs: data?.matched_pairs ?? 0,
       });
-      setRows(Array.isArray(data?.results) ? data.results : []);
+      const allResults = Array.isArray(data?.results) ? data.results : [];
+      setRows(allResults.slice(0, 100));  // cap at 100 records
       setLastRun(new Date().toISOString());
       setQuery("");
       setSearchResults(null);
@@ -245,7 +230,7 @@ export default function Dashboard() {
         {validationTarget && (
           <ValidationPanel
             poiName={validationTarget}
-            autoValidate={true}
+            autoValidate={false}
           />
         )}
 
@@ -278,10 +263,19 @@ export default function Dashboard() {
               counts={counts}
             />
             <div className="leftContent">
+              {displayRows.length === 0 && !searching && !loading ? (
+              <div className="emptyState">
+                <div className="emptyStateIcon">🔍</div>
+                <div className="emptyStateText">
+                  Search for a POI or click <strong>Run Detection</strong> to load results.
+                </div>
+              </div>
+            ) : (
               <ResultsTable
                 rows={displayRows}
                 onSelectValidation={handleSelectValidation}
               />
+            )}
             </div>
           </div>
 

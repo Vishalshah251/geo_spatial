@@ -59,10 +59,10 @@ class ChangeResult(BaseModel):
     lon: Optional[float] = None
     osm_id: Optional[str] = None
     external_id: Optional[str] = None
-    distance_m: Optional[float] = None
+    distance_m: float = 0.0
     name_similarity: Optional[float] = None
     # Review-enriched fields
-    review_rating: Optional[float] = None
-    review_count: Optional[int] = None
+    review_rating: float = 0.0
+    review_count: int = 0
     last_review_date: Optional[str] = None
     review_sentiment: Optional[str] = None

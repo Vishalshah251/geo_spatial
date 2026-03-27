@@ -161,6 +161,14 @@ export default function ValidationPanel({ poiName, autoValidate = true }) {
                     </span>
                   </div>
                   <div className="validationPanel__field">
+                    <span className="validationPanel__fieldLabel">Match Conf.</span>
+                    <span className="validationPanel__fieldValue">
+                      {typeof result.external.match_confidence === "number"
+                        ? `${Math.round(result.external.match_confidence * 100)}%`
+                        : "—"}
+                    </span>
+                  </div>
+                  <div className="validationPanel__field">
                     <span className="validationPanel__fieldLabel">Distance</span>
                     <span className="validationPanel__fieldValue">
                       {typeof result.external.distance_m === "number"

@@ -44,7 +44,7 @@ except ImportError:
 
 _GEOAPIFY_PLACES_URL = "https://api.geoapify.com/v2/places"
 _SEARCH_RADIUS_M = 500          # metres around the POI centroid
-_MIN_NAME_SIMILARITY = 0.45     # loose threshold — we show similarity score anyway
+_MIN_NAME_SIMILARITY = 0.65     # strict threshold to prevent mismatching completely different POIs
 _CACHE_TTL_S = 3600             # 1 hour
 _REQUEST_TIMEOUT_S = 10
 
@@ -225,9 +225,22 @@ def _pick_best_match(
         sim = _fuzzy_ratio(name, ext_name)
         dist = _haversine_m(lat, lon, ext_lat, ext_lon)
 
-        # Combined score: name similarity weighted 0.7, proximity weighted 0.3
-        dist_score = max(0.0, 1.0 - (dist / _SEARCH_RADIUS_M))
-        combined = 0.7 * sim + 0.3 * dist_score
+        # Distance penalty: rapid drop-off for distances beyond 50m
+        if dist <= 20:
+            dist_score = 1.0
+        elif dist <= 100:
+            # Linear decay from 1.0 at 20m down to ~0.60 at 100m
+            dist_score = 1.0 - ((dist - 20) / 200.0)
+        else:
+            # Steep exponential decay after 100m
+            dist_score = math.exp(-((dist - 100) / 100.0))
+
+        # We heavily weight name similarity (0.6) and distance (0.4)
+        combined = 0.6 * sim + 0.4 * dist_score
+
+        # Explicit confidence penalty if name is very different
+        if sim < 0.70:
+            combined *= 0.70
 
         if sim >= _MIN_NAME_SIMILARITY and combined > best_score:
             best_score = combined
@@ -239,6 +252,7 @@ def _pick_best_match(
                 "distance_m": round(dist, 1),
                 "name_similarity": round(sim, 3),
                 "combined_score": round(combined, 3),
+                "match_confidence": round(combined, 3),
                 "place_id": props.get("place_id", ""),
                 "address": props.get("formatted", ""),
             }
